@@ -1,4 +1,9 @@
-fastapi==0.115.6
+# FastAPI 0.141 is the first line that works with the Starlette 1.x that the
+# MCP SDK pulls in; 0.115 breaks on it.
+fastapi==0.141.1
 uvicorn[standard]==0.34.0
 python-multipart==0.0.20
 weasyprint==63.1
+httpx==0.28.1
+# 2.x renamed FastMCP to MCPServer and moved the module; do not float to 3.
+mcp>=2.0,<3

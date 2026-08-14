@@ -13,11 +13,17 @@ from typing import Annotated, Iterable
 
 import anyio
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from mcp.server.auth.routes import create_auth_routes
+from mcp.server.auth.settings import ClientRegistrationOptions
+from pydantic import AnyHttpUrl
 from starlette.background import BackgroundTask
 
 from .archive import ArchiveError, build_zip, safe_extract
+from .downloads import DownloadStore
+from .mcp_server import build_mcp_server
+from .oauth import SCOPE, SingleUserOAuthProvider
 from .auth import require_auth, warn_if_open
 from .config import Settings, get_settings
 from .convert import (
@@ -46,6 +52,9 @@ log = logging.getLogger("markdown-converter")
 STATIC_DIR = Path(__file__).parent / "static"
 
 _limiter: asyncio.Semaphore | None = None
+#: Shared by the MCP tools (which write) and /download (which reads), so it is
+#: created once at import rather than per-lifespan.
+_downloads = DownloadStore(ttl_seconds=get_settings().download_ttl_seconds)
 
 
 @asynccontextmanager
@@ -55,12 +64,23 @@ async def lifespan(app: FastAPI):
     warn_if_open(settings)
     _limiter = asyncio.Semaphore(max(1, settings.max_concurrent_conversions))
     log.info(
-        "ready: pdf engine=%s, themes=%s, mermaid=%s",
+        "ready: pdf engine=%s, themes=%s, mermaid=%s, mcp=%s",
         settings.default_pdf_engine,
         settings.themes_dir,
         "on" if settings.mermaid_enabled else "off",
+        "on" if settings.mcp_enabled else "off",
     )
-    yield
+    try:
+        if settings.mcp_enabled:
+            # Mounting the MCP app makes its session manager our responsibility;
+            # without this the first tool call fails with "Task group is not
+            # initialized".
+            async with app.state.mcp.session_manager.run():
+                yield
+        else:
+            yield
+    finally:
+        _downloads.shutdown()
 
 
 app = FastAPI(
@@ -72,6 +92,30 @@ app = FastAPI(
 
 if STATIC_DIR.is_dir():
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+# --------------------------------------------------------------------------
+# MCP server
+# --------------------------------------------------------------------------
+
+_settings = get_settings()
+if _settings.mcp_enabled:
+    _oauth = SingleUserOAuthProvider(_settings) if _settings.oauth_enabled else None
+    app.state.oauth = _oauth
+    app.state.mcp = build_mcp_server(_downloads, _settings)
+
+    if _oauth is not None:
+        # The SDK builds /authorize, /token, /register and the discovery
+        # metadata; our provider only decides who the user is.
+        for route in create_auth_routes(
+            provider=_oauth,
+            issuer_url=AnyHttpUrl(_settings.public_base_url),
+            client_registration_options=ClientRegistrationOptions(
+                enabled=True, valid_scopes=[SCOPE], default_scopes=[SCOPE]
+            ),
+        ):
+            app.router.routes.append(route)
+
+    app.mount("/mcp", app.state.mcp.streamable_http_app(streamable_http_path="/"))
 
 
 @app.middleware("http")
@@ -107,6 +151,72 @@ async def index(_: Annotated[str | None, Depends(require_auth)]) -> HTMLResponse
     if not page.is_file():
         return HTMLResponse("<h1>Markdown Converter</h1><p>See <a href='/docs'>/docs</a>.</p>")
     return HTMLResponse(page.read_text(encoding="utf-8"))
+
+
+@app.get("/download/{token}/{filename}", include_in_schema=False)
+async def download(token: str, filename: str):
+    """Collect a file an MCP tool produced.
+
+    Deliberately unauthenticated: the token *is* the credential. It is 256 bits
+    of entropy, single-purpose, and expires within minutes.
+    """
+    entry = _downloads.get(token)
+    if entry is None or entry.filename != filename:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "this download has expired or does not exist")
+    return FileResponse(entry.path, media_type=entry.media_type, filename=entry.filename)
+
+
+_LOGIN_PAGE = """<!doctype html><meta charset=utf-8>
+<title>Authorize Claude</title>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<style>
+ body{{font:15px/1.5 system-ui,sans-serif;background:#f6f7f9;color:#1f2328;margin:0;
+      display:flex;min-height:100vh;align-items:center;justify-content:center}}
+ form{{background:#fff;border:1px solid #dfe3e9;border-radius:10px;padding:2rem;width:min(360px,90vw)}}
+ h1{{font-size:1.2rem;margin:0 0 .4rem}} p{{color:#60697a;margin:0 0 1.4rem;font-size:.9rem}}
+ label{{display:block;font-size:.82rem;color:#60697a;margin:.8rem 0 .3rem}}
+ input{{width:100%;box-sizing:border-box;padding:.55rem;border:1px solid #dfe3e9;border-radius:8px;font:inherit}}
+ button{{width:100%;margin-top:1.4rem;padding:.7rem;border:0;border-radius:8px;
+        background:#2f6feb;color:#fff;font:600 1rem inherit;cursor:pointer}}
+ .err{{color:#c02b34;font-size:.85rem;margin-top:1rem}}
+</style>
+<form method=post action="/oauth/login">
+ <h1>Authorize Claude</h1>
+ <p>Sign in with your converter credentials to let Claude connect.</p>
+ <input type=hidden name=request value="{request}">
+ <label for=u>Username</label><input id=u name=username autocomplete=username autofocus>
+ <label for=p>Password</label><input id=p name=password type=password autocomplete=current-password>
+ <button type=submit>Authorize</button>
+ {error}
+</form>
+"""
+
+
+@app.get("/oauth/login", response_class=HTMLResponse, include_in_schema=False)
+async def oauth_login_form(request: str, error: str = "") -> HTMLResponse:
+    provider: SingleUserOAuthProvider | None = getattr(app.state, "oauth", None)
+    if provider is None or provider.pending(request) is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "this authorization request has expired")
+    message = '<p class="err">Incorrect username or password.</p>' if error else ""
+    return HTMLResponse(_LOGIN_PAGE.format(request=request, error=message))
+
+
+@app.post("/oauth/login", include_in_schema=False)
+async def oauth_login(
+    request: Annotated[str, Form()],
+    username: Annotated[str, Form()] = "",
+    password: Annotated[str, Form()] = "",
+):
+    provider: SingleUserOAuthProvider | None = getattr(app.state, "oauth", None)
+    if provider is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "OAuth is not configured")
+
+    redirect = provider.complete_login(request, username, password)
+    if redirect is None:
+        if provider.pending(request) is None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "this authorization request has expired")
+        return RedirectResponse(f"/oauth/login?request={request}&error=1", status_code=303)
+    return RedirectResponse(redirect, status_code=303)
 
 
 @app.get("/api/formats")

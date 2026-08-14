@@ -104,6 +104,8 @@ Every endpoint except `/healthz` sits behind HTTP Basic auth when
 | `GET`  | `/api/version`        | Versions of pandoc, Typst, WeasyPrint, mmdc  |
 | `POST` | `/api/convert`        | One document in, one file out                |
 | `POST` | `/api/convert/batch`  | Many documents (or a zip) in, a zip out      |
+| `*`    | `/mcp/`               | MCP server — see [Using it from Claude](#using-it-from-claude-mcp) |
+| `GET`  | `/download/{token}/…` | Collect a file an MCP tool produced (token-authenticated) |
 
 ### `POST /api/convert`
 
@@ -161,6 +163,80 @@ curl -u mark:secret -F files=@a.md -F files=@b.md -F to=pdf \
 
 ---
 
+## Using it from Claude (MCP)
+
+The service doubles as an [MCP](https://modelcontextprotocol.io) server at
+`/mcp`, so Claude can convert documents as a tool instead of you driving the UI.
+Same container, same auth, same conversion engine. Turn it off with
+`MCP_ENABLED=false`.
+
+### Tools
+
+| Tool | What it does |
+|------|--------------|
+| `list_formats` | Every format, PDF engine, paper size and theme available. Claude calls this to avoid guessing format keys. |
+| `convert` | Markdown in, converted document out. |
+| `convert_file_from` | Fetches an http(s) URL, or reads a path inside the container, and converts it — keeps large documents out of the conversation. |
+| `preview` | Renders to an HTML fragment so Claude can check the structure before committing to a PDF. |
+
+Text formats (`html-fragment`, `latex`, `rst`, `gfm`, …) come back inline.
+PDF, Word and the other binaries come back as a **download link**, because an
+MCP tool result carries text, not files. Links live for `DOWNLOAD_TTL_SECONDS`
+(15 minutes by default) and the 256-bit token in the URL is the only credential
+they need — set `PUBLIC_BASE_URL` to whatever Claude can actually reach.
+
+### Claude Code / Claude Desktop
+
+These send a fixed header, so your existing Basic auth is all you need. In
+`.mcp.json` (project) or `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "markdown-converter": {
+      "type": "http",
+      "url": "https://md.example.com/mcp/",
+      "headers": { "Authorization": "Basic <base64 of user:password>" }
+    }
+  }
+}
+```
+
+Generate the header value with `printf 'mark:secret' | base64`.
+
+### claude.ai on the web
+
+The web app speaks OAuth rather than static headers, so the service runs a
+small single-user OAuth 2.1 authorization server alongside the converter. There
+is no second account: you log in with the same `AUTH_USERNAME` /
+`AUTH_PASSWORD`.
+
+1. Invent a client ID and secret and set them on the service:
+   ```
+   OAUTH_CLIENT_ID=claude-web
+   OAUTH_CLIENT_SECRET=<something long>
+   OAUTH_REDIRECT_URIS=https://claude.ai/api/mcp/auth_callback
+   PUBLIC_BASE_URL=https://md.example.com
+   ```
+2. In Claude, **Settings → Connectors → Add custom connector**, URL
+   `https://md.example.com/mcp/`.
+3. Under **Advanced settings**, enter the same client ID and secret.
+4. Connect. You will be sent to the converter's login page once; after that
+   Claude refreshes its own token.
+
+Those Advanced-settings fields are not a username and password — they
+pre-register Claude as an OAuth client so it can skip dynamic registration. The
+authorization server itself is what this service provides, at
+`/.well-known/oauth-authorization-server`, `/authorize`, `/token` and
+`/register`.
+
+Codes and tokens are held in memory, so a redeploy signs Claude out and it
+reconnects on next use. Leave `OAUTH_CLIENT_ID` empty and no OAuth routes are
+served at all.
+
+
+---
+
 ## Configuration
 
 All optional except the auth pair. See [`.env.example`](.env.example).
@@ -183,6 +259,12 @@ All optional except the auth pair. See [`.env.example`](.env.example).
 | `MAX_CONCURRENT_CONVERSIONS` | `2`            | Parallel conversions; raise on a bigger server |
 | `REVEALJS_URL`               | unpkg CDN      | Point at a local copy for offline slides       |
 | `LOG_LEVEL`                  | `INFO`         | Python log level                               |
+| `MCP_ENABLED`                | `true`         | Serve the MCP endpoint at `/mcp`               |
+| `PUBLIC_BASE_URL`            | `localhost:8000` | Public URL; MCP download links are built from it |
+| `DOWNLOAD_TTL_SECONDS`       | `900`          | Lifetime of an MCP download link               |
+| `OAUTH_CLIENT_ID`            | —              | Pre-registered OAuth client; empty disables OAuth |
+| `OAUTH_CLIENT_SECRET`        | —              | Secret for that client                         |
+| `OAUTH_REDIRECT_URIS`        | —              | Comma-separated callback URLs Claude may use   |
 
 ---
 
@@ -243,6 +325,9 @@ app/
 ├── archive.py     safe zip handling
 ├── formats.py     the output-format registry
 ├── auth.py        HTTP Basic auth
+├── mcp_server.py  MCP tools over Streamable HTTP
+├── oauth.py       single-user OAuth 2.1 server for claude.ai
+├── downloads.py   short-lived links for files MCP produces
 └── static/        the web UI
 ```
 
