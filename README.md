@@ -179,6 +179,9 @@ Same container, same auth, same conversion engine. Turn it off with
 | `convert_file_from` | Fetches an http(s) URL, or reads a path inside the container, and converts it — keeps large documents out of the conversation. |
 | `preview` | Renders to an HTML fragment so Claude can check the structure before committing to a PDF. |
 
+The endpoint requires credentials: the same Basic auth as the rest of the
+service, or an OAuth bearer token. Either `/mcp` or `/mcp/` works.
+
 Text formats (`html-fragment`, `latex`, `rst`, `gfm`, …) come back inline.
 PDF, Word and the other binaries come back as a **download link**, because an
 MCP tool result carries text, not files. Links live for `DOWNLOAD_TTL_SECONDS`
@@ -195,7 +198,7 @@ These send a fixed header, so your existing Basic auth is all you need. In
   "mcpServers": {
     "markdown-converter": {
       "type": "http",
-      "url": "https://md.example.com/mcp/",
+      "url": "https://md.example.com/mcp",
       "headers": { "Authorization": "Basic <base64 of user:password>" }
     }
   }
@@ -218,8 +221,7 @@ is no second account: you log in with the same `AUTH_USERNAME` /
    OAUTH_REDIRECT_URIS=https://claude.ai/api/mcp/auth_callback
    PUBLIC_BASE_URL=https://md.example.com
    ```
-2. In Claude, **Settings → Connectors → Add custom connector**, URL
-   `https://md.example.com/mcp/`.
+2. In Claude, **Settings → Connectors → Add custom connector**, URL `https://md.example.com/mcp`.
 3. Under **Advanced settings**, enter the same client ID and secret.
 4. Connect. You will be sent to the converter's login page once; after that
    Claude refreshes its own token.

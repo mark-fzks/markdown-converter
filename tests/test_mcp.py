@@ -254,3 +254,67 @@ async def test_revoking_an_access_token_invalidates_it(provider):
     access = await provider.load_access_token(token.access_token)
     await provider.revoke_token(access)
     assert await provider.load_access_token(token.access_token) is None
+
+
+# --- the MCP endpoint is guarded ------------------------------------------
+#
+# Regressions from the first MCP release: /mcp (no trailing slash) answered a
+# 307 that MCP clients will not follow on POST, and the mounted app bypassed
+# Basic auth entirely because FastAPI dependencies do not reach a sub-app.
+# These use a bare TestClient so the lifespan (and the single-run MCP session
+# manager) never starts; a 401 is decided in middleware, before the mount.
+
+INITIALIZE = {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
+    "params": {
+        "protocolVersion": "2025-06-18",
+        "capabilities": {},
+        "clientInfo": {"name": "probe", "version": "1"},
+    },
+}
+MCP_HEADERS = {
+    "Content-Type": "application/json",
+    "Accept": "application/json, text/event-stream",
+}
+
+
+@pytest.fixture
+def guarded_client(mcp_env):
+    from fastapi.testclient import TestClient
+
+    import app.main as main
+
+    # No `with`: the lifespan, and the MCP session manager, stay unstarted.
+    return TestClient(main.app)
+
+
+@pytest.mark.parametrize("path", ["/mcp", "/mcp/"])
+def test_mcp_rejects_anonymous_callers(guarded_client, path):
+    response = guarded_client.post(path, json=INITIALIZE, headers=MCP_HEADERS)
+    assert response.status_code == 401
+    assert "www-authenticate" in response.headers
+
+
+@pytest.mark.parametrize("path", ["/mcp", "/mcp/"])
+def test_mcp_rejects_wrong_credentials(guarded_client, path):
+    response = guarded_client.post(
+        path, json=INITIALIZE, headers=MCP_HEADERS, auth=("mark", "wrong")
+    )
+    assert response.status_code == 401
+
+
+def test_mcp_without_a_slash_is_not_a_redirect(guarded_client):
+    """MCP clients do not follow a redirect on POST, so /mcp must be terminal."""
+    response = guarded_client.post(
+        "/mcp", json=INITIALIZE, headers=MCP_HEADERS, follow_redirects=False
+    )
+    assert response.status_code != 307
+
+
+def test_challenge_advertises_oauth_when_configured(guarded_client):
+    response = guarded_client.post("/mcp/", json=INITIALIZE, headers=MCP_HEADERS)
+    challenge = response.headers["www-authenticate"]
+    assert "Bearer" in challenge and "resource_metadata=" in challenge
+    assert "Basic" in challenge
