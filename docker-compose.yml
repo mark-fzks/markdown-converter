@@ -1,0 +1,34 @@
+services:
+  markdown-converter:
+    build: .
+    # On Coolify you can point at the published image instead of building:
+    # image: ghcr.io/mark-fzks/markdown-converter:latest
+    container_name: markdown-converter
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # --- auth (leave unset only on a private network) ---
+      AUTH_USERNAME: ${AUTH_USERNAME:?set AUTH_USERNAME in your .env}
+      AUTH_PASSWORD: ${AUTH_PASSWORD:?set AUTH_PASSWORD in your .env}
+      # --- conversion defaults ---
+      DEFAULT_PDF_ENGINE: ${DEFAULT_PDF_ENGINE:-typst}
+      DEFAULT_THEME: ${DEFAULT_THEME:-default}
+      MERMAID_ENABLED: ${MERMAID_ENABLED:-true}
+      # --- limits ---
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-32}
+      CONVERSION_TIMEOUT: ${CONVERSION_TIMEOUT:-120}
+      MAX_CONCURRENT_CONVERSIONS: ${MAX_CONCURRENT_CONVERSIONS:-2}
+    volumes:
+      # Drop your own CSS / Typst templates / reference.docx in here.
+      - ./themes:/app/themes:ro
+    tmpfs:
+      # Conversions are scratch work; keep them off the disk. Raise this if you
+      # convert large documents or run many conversions at once.
+      - /tmp:size=1g
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=4).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s

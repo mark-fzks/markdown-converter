@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+.env
+*.egg-info/
+
+# local conversion output
+out/
+*.pdf
+*.docx
+*.odt
+*.epub
+!examples/**/*.pdf

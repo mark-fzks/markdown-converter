@@ -1,0 +1,180 @@
+/*
+ * Default document theme: used for HTML, EPUB, reveal.js and WeasyPrint PDFs.
+ * Copy this file to themes/css/<yourname>.css and pass theme=<yourname> to
+ * override it without touching the image.
+ */
+
+:root {
+  --ink: #1f2328;
+  --muted: #59636e;
+  --rule: #d1d9e0;
+  --accent: #0969da;
+  --code-bg: #f6f8fa;
+  --quote-bar: #d1d9e0;
+}
+
+html {
+  font-size: 11pt;
+}
+
+body {
+  font-family: "Source Serif 4", "DejaVu Serif", Georgia, serif;
+  line-height: 1.55;
+  color: var(--ink);
+  max-width: 46em;
+  margin: 0 auto;
+  padding: 2rem 1.25rem 4rem;
+  hyphens: auto;
+}
+
+/* --- headings ---------------------------------------------------------- */
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: "Inter", "DejaVu Sans", system-ui, sans-serif;
+  line-height: 1.25;
+  font-weight: 600;
+  margin: 1.8em 0 0.6em;
+  break-after: avoid;
+  page-break-after: avoid;
+}
+
+h1 { font-size: 2em; margin-top: 0; letter-spacing: -0.01em; }
+h2 { font-size: 1.45em; padding-bottom: 0.25em; border-bottom: 1px solid var(--rule); }
+h3 { font-size: 1.2em; }
+h4 { font-size: 1.05em; }
+h5, h6 { font-size: 1em; color: var(--muted); }
+
+/* Pandoc's title block */
+header#title-block-header .title { font-size: 2.2em; margin-bottom: 0.2em; }
+header#title-block-header .author,
+header#title-block-header .date { color: var(--muted); margin: 0.15em 0; }
+
+/* --- flow -------------------------------------------------------------- */
+
+p { margin: 0 0 1em; orphans: 3; widows: 3; }
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+ul, ol { padding-left: 1.6em; margin: 0 0 1em; }
+li { margin: 0.25em 0; }
+li > ul, li > ol { margin-bottom: 0; }
+
+blockquote {
+  margin: 1.2em 0;
+  padding: 0.1em 1.1em;
+  border-left: 3px solid var(--quote-bar);
+  color: var(--muted);
+}
+
+hr { border: 0; border-top: 1px solid var(--rule); margin: 2.5em 0; }
+
+/* --- code -------------------------------------------------------------- */
+
+code, kbd, pre, samp {
+  font-family: "JetBrains Mono", "DejaVu Sans Mono", ui-monospace, monospace;
+  font-size: 0.86em;
+}
+
+code {
+  background: var(--code-bg);
+  padding: 0.15em 0.35em;
+  border-radius: 4px;
+}
+
+pre {
+  background: var(--code-bg);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 0.85em 1em;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  break-inside: avoid;
+}
+
+pre code { background: none; padding: 0; }
+
+/* --- tables ------------------------------------------------------------ */
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1.4em 0;
+  font-size: 0.94em;
+  break-inside: avoid;
+}
+
+th, td {
+  border: 1px solid var(--rule);
+  padding: 0.45em 0.7em;
+  text-align: left;
+  vertical-align: top;
+}
+
+thead th {
+  background: var(--code-bg);
+  font-family: "Inter", "DejaVu Sans", system-ui, sans-serif;
+  font-weight: 600;
+}
+
+caption { color: var(--muted); font-size: 0.9em; padding-bottom: 0.5em; }
+
+/* --- figures ----------------------------------------------------------- */
+
+img, svg { max-width: 100%; height: auto; }
+
+figure { margin: 1.5em 0; text-align: center; break-inside: avoid; }
+figcaption { color: var(--muted); font-size: 0.9em; margin-top: 0.5em; }
+
+/* --- table of contents ------------------------------------------------- */
+
+nav#TOC {
+  margin: 0 0 2.5em;
+  padding: 1em 1.25em;
+  background: var(--code-bg);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  break-after: page;
+}
+
+nav#TOC > ul { padding-left: 1.2em; margin: 0; }
+nav#TOC ul { list-style: none; }
+nav#TOC a { color: var(--ink); }
+
+/* --- footnotes --------------------------------------------------------- */
+
+.footnotes {
+  margin-top: 3em;
+  padding-top: 1em;
+  border-top: 1px solid var(--rule);
+  font-size: 0.9em;
+  color: var(--muted);
+}
+
+/* --- screen-only niceties ---------------------------------------------- */
+
+@media screen {
+  body { text-rendering: optimizeLegibility; }
+  pre { overflow-x: auto; }
+}
+
+/* --- print / PDF -------------------------------------------------------- */
+
+@media print {
+  body { max-width: none; padding: 0; }
+  a { color: var(--ink); }
+  pre, blockquote, table, figure { break-inside: avoid; }
+
+  /* Pandoc gives source lines a hanging indent (text-indent:-5em with a
+     matching padding-left). Print engines apply the padding but not the
+     negative indent, which pushes every line 5em to the right. */
+  pre > code.sourceCode > span { text-indent: 0; padding-left: 0; }
+
+  /* Turn the TOC into a real one: dot leaders and page numbers. */
+  nav#TOC { background: none; border: 0; padding: 0; }
+  nav#TOC a::after {
+    content: leader('.') target-counter(attr(href), page);
+    color: var(--muted);
+  }
+}

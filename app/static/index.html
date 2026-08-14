@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Markdown Converter</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --ink: #1f2328;
+    --muted: #60697a;
+    --rule: #dfe3e9;
+    --accent: #2f6feb;
+    --accent-ink: #ffffff;
+    --ok: #1a7f4b;
+    --err: #c02b34;
+    --radius: 10px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171c;
+      --panel: #1c2027;
+      --ink: #e6e9ef;
+      --muted: #9aa4b4;
+      --rule: #2c323c;
+      --accent: #4d8bff;
+      --ok: #4ec98a;
+      --err: #ff7b7b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }
+  header h1 { font-size: 1.6rem; margin: 0 0 .3rem; letter-spacing: -.01em; }
+  header p { margin: 0 0 2rem; color: var(--muted); }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    padding: 1.25rem;
+    margin-bottom: 1.25rem;
+  }
+  .tabs { display: flex; gap: .5rem; margin-bottom: 1rem; }
+  .tab {
+    border: 1px solid var(--rule); background: transparent; color: var(--muted);
+    padding: .4rem .9rem; border-radius: 999px; cursor: pointer; font: inherit;
+  }
+  .tab[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  #drop {
+    border: 2px dashed var(--rule); border-radius: var(--radius);
+    padding: 2.2rem 1rem; text-align: center; color: var(--muted);
+    cursor: pointer; transition: border-color .15s, background .15s;
+  }
+  #drop.over { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  #drop strong { color: var(--ink); display: block; margin-bottom: .25rem; }
+  #fileList { list-style: none; margin: 1rem 0 0; padding: 0; font-size: .9rem; }
+  #fileList li { display: flex; justify-content: space-between; padding: .35rem 0; border-bottom: 1px solid var(--rule); }
+  #fileList li span:last-child { color: var(--muted); }
+  textarea {
+    width: 100%; min-height: 230px; resize: vertical; padding: .8rem;
+    border: 1px solid var(--rule); border-radius: 8px; background: var(--bg); color: var(--ink);
+    font: 13px/1.5 ui-monospace, "DejaVu Sans Mono", monospace;
+  }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: .9rem; }
+  label { display: block; font-size: .82rem; color: var(--muted); margin-bottom: .3rem; }
+  select, input[type="text"], input[type="number"] {
+    width: 100%; padding: .5rem .6rem; border: 1px solid var(--rule);
+    border-radius: 8px; background: var(--bg); color: var(--ink); font: inherit;
+  }
+  .checks { display: flex; flex-wrap: wrap; gap: 1.1rem; margin-top: 1rem; }
+  .checks label { display: flex; align-items: center; gap: .45rem; margin: 0; font-size: .9rem; color: var(--ink); }
+  .checks input { accent-color: var(--accent); }
+  details summary { cursor: pointer; color: var(--muted); font-size: .9rem; margin-top: 1rem; }
+  details[open] summary { margin-bottom: 1rem; }
+  button.go {
+    width: 100%; padding: .8rem; border: 0; border-radius: 8px;
+    background: var(--accent); color: var(--accent-ink); font: 600 1rem/1 inherit; cursor: pointer;
+  }
+  button.go:disabled { opacity: .55; cursor: progress; }
+  #status { margin-top: .9rem; font-size: .9rem; min-height: 1.4em; white-space: pre-wrap; }
+  #status.ok { color: var(--ok); }
+  #status.err { color: var(--err); }
+  footer { color: var(--muted); font-size: .85rem; text-align: center; }
+  footer a { color: var(--accent); }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Markdown Converter</h1>
+    <p>Drop markdown in, get PDF, Word, or whatever else you need back out.</p>
+  </header>
+
+  <form id="form">
+    <div class="panel">
+      <div class="tabs" role="tablist">
+        <button type="button" class="tab" id="tabFiles" role="tab" aria-selected="true">Upload files</button>
+        <button type="button" class="tab" id="tabText" role="tab" aria-selected="false">Paste markdown</button>
+      </div>
+
+      <div id="paneFiles">
+        <div id="drop" tabindex="0" role="button">
+          <strong>Drop .md files or a .zip here</strong>
+          or click to choose &middot; several files come back as a zip
+        </div>
+        <input type="file" id="files" multiple accept=".md,.markdown,.mdown,.mkd,.txt,.zip" class="hidden" />
+        <ul id="fileList"></ul>
+      </div>
+
+      <div id="paneText" class="hidden">
+        <textarea id="text" placeholder="# Hello&#10;&#10;Write or paste markdown here."></textarea>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="grid">
+        <div>
+          <label for="to">Convert to</label>
+          <select id="to" name="to"></select>
+        </div>
+        <div id="engineWrap">
+          <label for="pdf_engine">PDF engine</label>
+          <select id="pdf_engine" name="pdf_engine"></select>
+        </div>
+        <div>
+          <label for="theme">Theme</label>
+          <select id="theme" name="theme"></select>
+        </div>
+      </div>
+
+      <div class="checks">
+        <label><input type="checkbox" id="toc" /> Table of contents</label>
+        <label><input type="checkbox" id="number_sections" /> Number sections</label>
+        <label><input type="checkbox" id="mermaid" checked /> Render Mermaid diagrams</label>
+      </div>
+
+      <details>
+        <summary>More options</summary>
+        <div class="grid">
+          <div>
+            <label for="papersize">Paper size</label>
+            <select id="papersize" name="papersize"></select>
+          </div>
+          <div>
+            <label for="fontsize">Base font size</label>
+            <input type="text" id="fontsize" value="11pt" />
+          </div>
+          <div>
+            <label for="margin">Page margin</label>
+            <input type="text" id="margin" value="2cm" />
+          </div>
+          <div>
+            <label for="mainfont">Main font (Typst/PDF)</label>
+            <input type="text" id="mainfont" placeholder="e.g. DejaVu Serif" />
+          </div>
+          <div>
+            <label for="highlight_style">Code highlighting</label>
+            <select id="highlight_style" name="highlight_style"></select>
+          </div>
+          <div>
+            <label for="toc_depth">TOC depth</label>
+            <input type="number" id="toc_depth" value="3" min="1" max="6" />
+          </div>
+          <div>
+            <label for="title">Title (overrides front-matter)</label>
+            <input type="text" id="title" />
+          </div>
+          <div>
+            <label for="author">Author</label>
+            <input type="text" id="author" />
+          </div>
+        </div>
+      </details>
+    </div>
+
+    <button type="submit" class="go" id="go">Convert</button>
+    <div id="status" role="status"></div>
+  </form>
+
+  <footer><p>API docs at <a href="/docs">/docs</a> &middot; <a href="/api/version">tool versions</a></p></footer>
+</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const state = { files: [], mode: "files" };
+
+  // ---- populate the selects from the API ---------------------------------
+  const option = (value, label, selected) => {
+    const o = document.createElement("option");
+    o.value = value; o.textContent = label; if (selected) o.selected = true;
+    return o;
+  };
+
+  async function loadMeta() {
+    const [formats, themes] = await Promise.all([
+      fetch("/api/formats").then((r) => r.json()),
+      fetch("/api/themes").then((r) => r.json()),
+    ]);
+
+    const groups = new Map();
+    for (const f of formats.formats) {
+      if (!groups.has(f.group)) groups.set(f.group, []);
+      groups.get(f.group).push(f);
+    }
+    for (const [name, items] of groups) {
+      const g = document.createElement("optgroup");
+      g.label = name;
+      for (const f of items) g.appendChild(option(f.key, f.label, f.key === "pdf"));
+      $("to").appendChild(g);
+    }
+
+    for (const e of formats.pdf_engines) $("pdf_engine").appendChild(option(e, e));
+    for (const p of formats.paper_sizes) $("papersize").appendChild(option(p, p.toUpperCase(), p === "a4"));
+    for (const h of formats.highlight_styles) $("highlight_style").appendChild(option(h, h, h === "pygments"));
+
+    const names = themes.themes.map((t) => t.name);
+    if (!names.includes(themes.default)) names.unshift(themes.default);
+    for (const n of names) $("theme").appendChild(option(n, n, n === themes.default));
+  }
+
+  // ---- tabs --------------------------------------------------------------
+  const setMode = (mode) => {
+    state.mode = mode;
+    $("tabFiles").setAttribute("aria-selected", mode === "files");
+    $("tabText").setAttribute("aria-selected", mode === "text");
+    $("paneFiles").classList.toggle("hidden", mode !== "files");
+    $("paneText").classList.toggle("hidden", mode !== "text");
+  };
+  $("tabFiles").onclick = () => setMode("files");
+  $("tabText").onclick = () => setMode("text");
+
+  // ---- file picking ------------------------------------------------------
+  const drop = $("drop");
+  const renderFiles = () => {
+    $("fileList").innerHTML = "";
+    for (const f of state.files) {
+      const li = document.createElement("li");
+      const name = document.createElement("span");
+      const size = document.createElement("span");
+      name.textContent = f.name;
+      size.textContent = (f.size / 1024).toFixed(1) + " KB";
+      li.append(name, size);
+      $("fileList").appendChild(li);
+    }
+  };
+  const addFiles = (list) => { state.files = Array.from(list); renderFiles(); };
+
+  drop.onclick = () => $("files").click();
+  drop.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); $("files").click(); } };
+  $("files").onchange = (e) => addFiles(e.target.files);
+  ["dragenter", "dragover"].forEach((ev) =>
+    drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+  ["dragleave", "drop"].forEach((ev) =>
+    drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
+  drop.addEventListener("drop", (e) => addFiles(e.dataTransfer.files));
+
+  // ---- PDF-only controls -------------------------------------------------
+  const syncEngine = () => $("engineWrap").classList.toggle("hidden", $("to").value !== "pdf");
+  $("to").onchange = syncEngine;
+
+  // ---- submit ------------------------------------------------------------
+  const say = (msg, kind = "") => { const s = $("status"); s.textContent = msg; s.className = kind; };
+
+  const commonFields = (fd) => {
+    fd.append("to", $("to").value);
+    if ($("to").value === "pdf") fd.append("pdf_engine", $("pdf_engine").value);
+    fd.append("theme", $("theme").value);
+    fd.append("toc", $("toc").checked);
+    fd.append("toc_depth", $("toc_depth").value);
+    fd.append("number_sections", $("number_sections").checked);
+    fd.append("mermaid", $("mermaid").checked);
+    fd.append("papersize", $("papersize").value);
+    fd.append("fontsize", $("fontsize").value || "11pt");
+    fd.append("margin", $("margin").value || "2cm");
+    fd.append("highlight_style", $("highlight_style").value);
+    if ($("mainfont").value) fd.append("mainfont", $("mainfont").value);
+  };
+
+  const filenameFrom = (response, fallback) => {
+    const header = response.headers.get("content-disposition") || "";
+    const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(header);
+    return match ? decodeURIComponent(match[1]) : fallback;
+  };
+
+  $("form").onsubmit = async (e) => {
+    e.preventDefault();
+    const fd = new FormData();
+    let url = "/api/convert";
+
+    if (state.mode === "text") {
+      const text = $("text").value.trim();
+      if (!text) return say("Paste some markdown first.", "err");
+      fd.append("text", text);
+      if ($("title").value) fd.append("filename", $("title").value);
+    } else {
+      if (!state.files.length) return say("Choose at least one file.", "err");
+      if (state.files.length === 1 && !state.files[0].name.toLowerCase().endsWith(".zip")) {
+        fd.append("file", state.files[0]);
+      } else {
+        url = "/api/convert/batch";
+        for (const f of state.files) fd.append("files", f);
+      }
+    }
+    if ($("title").value) fd.append("title", $("title").value);
+    if ($("author").value) fd.append("author", $("author").value);
+    commonFields(fd);
+
+    $("go").disabled = true;
+    say("Converting…");
+    try {
+      const response = await fetch(url, { method: "POST", body: fd, credentials: "same-origin" });
+      if (!response.ok) {
+        let detail = response.statusText;
+        try { detail = (await response.json()).detail || detail; } catch (_) {}
+        return say("Failed: " + detail, "err");
+      }
+      const blob = await response.blob();
+      const name = filenameFrom(response, "converted");
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = name;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(link.href), 10000);
+
+      const warnings = response.headers.get("x-conversion-warnings");
+      say(warnings ? `Downloaded ${name} — with warnings: ${warnings}` : `Downloaded ${name}`, "ok");
+    } catch (err) {
+      say("Failed: " + err.message, "err");
+    } finally {
+      $("go").disabled = false;
+    }
+  };
+
+  loadMeta().then(syncEngine).catch((err) => say("Could not load options: " + err.message, "err"));
+})();
+</script>
+</body>
+</html>
