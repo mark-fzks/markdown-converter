@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import logging
 import os
+import secrets
 import shutil
 import tempfile
 from contextlib import asynccontextmanager
@@ -116,6 +119,68 @@ if _settings.mcp_enabled:
             app.router.routes.append(route)
 
     app.mount("/mcp", app.state.mcp.streamable_http_app(streamable_http_path="/"))
+
+
+async def _mcp_credentials_ok(request: Request, settings: Settings) -> bool:
+    """Accept either the Basic credentials or an OAuth bearer token.
+
+    Claude Code and Desktop send a fixed Basic header; claude.ai sends a bearer
+    token minted by our own authorization server.
+    """
+    header = request.headers.get("authorization", "")
+    scheme, _, value = header.partition(" ")
+    scheme = scheme.lower()
+
+    if scheme == "basic":
+        try:
+            decoded = base64.b64decode(value, validate=True).decode("utf-8")
+        except (binascii.Error, UnicodeDecodeError):
+            return False
+        username, _, password = decoded.partition(":")
+        return bool(
+            secrets.compare_digest(username.encode(), settings.auth_username.encode())
+            & secrets.compare_digest(password.encode(), settings.auth_password.encode())
+        )
+
+    if scheme == "bearer":
+        provider: SingleUserOAuthProvider | None = getattr(app.state, "oauth", None)
+        if provider is None:
+            return False
+        return await provider.load_access_token(value) is not None
+
+    return False
+
+
+@app.middleware("http")
+async def guard_mcp(request: Request, call_next):
+    """Normalise /mcp and authenticate it.
+
+    Two things the mount cannot do for itself. Starlette redirects /mcp to
+    /mcp/, and MCP clients do not follow a redirect on POST — so rewrite the
+    path instead. And a mounted ASGI app never sees FastAPI's dependencies,
+    so the Basic auth guarding the rest of the service does not reach it.
+    """
+    if request.scope["path"] == "/mcp":
+        request.scope["path"] = "/mcp/"
+
+    if request.scope["path"].startswith("/mcp/"):
+        settings = get_settings()
+        if settings.auth_enabled and not await _mcp_credentials_ok(request, settings):
+            challenge = f'Basic realm="{settings.auth_realm}"'
+            if settings.oauth_enabled:
+                # Point OAuth clients at discovery so they can start a flow.
+                challenge = (
+                    f'Bearer realm="{settings.auth_realm}", '
+                    f'resource_metadata="{settings.public_base_url.rstrip("/")}'
+                    '/.well-known/oauth-protected-resource", ' + challenge
+                )
+            return JSONResponse(
+                {"detail": "Authentication required"},
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                headers={"WWW-Authenticate": challenge},
+            )
+
+    return await call_next(request)
 
 
 @app.middleware("http")
