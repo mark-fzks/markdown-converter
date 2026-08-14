@@ -18,7 +18,11 @@ import anyio
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from mcp.server.auth.routes import create_auth_routes
+from mcp.server.auth.routes import (
+    build_resource_metadata_url,
+    create_auth_routes,
+    create_protected_resource_routes,
+)
 from mcp.server.auth.settings import ClientRegistrationOptions
 from pydantic import AnyHttpUrl
 from starlette.background import BackgroundTask
@@ -118,6 +122,20 @@ if _settings.mcp_enabled:
         ):
             app.router.routes.append(route)
 
+        # RFC 9728 protected-resource metadata. An MCP client that gets a 401
+        # reads `resource_metadata` off the challenge and fetches this to learn
+        # which authorization server to use; without it the client authorizes
+        # and then cannot complete the handshake.
+        _resource_url = AnyHttpUrl(_settings.public_base_url.rstrip("/") + "/mcp")
+        app.state.resource_metadata_url = str(build_resource_metadata_url(_resource_url))
+        for route in create_protected_resource_routes(
+            resource_url=_resource_url,
+            authorization_servers=[AnyHttpUrl(_settings.public_base_url)],
+            scopes_supported=[SCOPE],
+            resource_name="Markdown Converter",
+        ):
+            app.router.routes.append(route)
+
     app.mount("/mcp", app.state.mcp.streamable_http_app(streamable_http_path="/"))
 
 
@@ -169,10 +187,16 @@ async def guard_mcp(request: Request, call_next):
             challenge = f'Basic realm="{settings.auth_realm}"'
             if settings.oauth_enabled:
                 # Point OAuth clients at discovery so they can start a flow.
+                # Must be the canonical, path-suffixed RFC 9728 URL, not the
+                # bare /.well-known/oauth-protected-resource.
+                # Advertise Bearer *alone*: a comma-separated multi-scheme
+                # challenge is widely mis-parsed, and a trailing `Basic` can be
+                # read as a Bearer parameter. Clients that use Basic send it
+                # proactively and never need to be told.
+                metadata_url = getattr(app.state, "resource_metadata_url", "")
                 challenge = (
                     f'Bearer realm="{settings.auth_realm}", '
-                    f'resource_metadata="{settings.public_base_url.rstrip("/")}'
-                    '/.well-known/oauth-protected-resource", ' + challenge
+                    f'resource_metadata="{metadata_url}"'
                 )
             return JSONResponse(
                 {"detail": "Authentication required"},
