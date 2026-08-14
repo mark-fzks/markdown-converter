@@ -282,10 +282,16 @@ MCP_HEADERS = {
 
 @pytest.fixture
 def guarded_client(mcp_env):
+    import importlib
+
     from fastapi.testclient import TestClient
 
     import app.main as main
 
+    # The app is assembled at import time from the environment, and another
+    # test module may have imported it first with MCP disabled. Rebuild it
+    # under this fixture's settings.
+    main = importlib.reload(main)
     # No `with`: the lifespan, and the MCP session manager, stay unstarted.
     return TestClient(main.app)
 
@@ -316,5 +322,11 @@ def test_mcp_without_a_slash_is_not_a_redirect(guarded_client):
 def test_challenge_advertises_oauth_when_configured(guarded_client):
     response = guarded_client.post("/mcp/", json=INITIALIZE, headers=MCP_HEADERS)
     challenge = response.headers["www-authenticate"]
-    assert "Bearer" in challenge and "resource_metadata=" in challenge
-    assert "Basic" in challenge
+    # Bearer only: a multi-scheme challenge is widely mis-parsed.
+    assert challenge.startswith("Bearer ")
+    assert "Basic" not in challenge
+    # The URL must be the canonical path-suffixed RFC 9728 one, and must
+    # resolve - pointing at a 404 breaks client discovery.
+    url = challenge.split('resource_metadata="')[1].split('"')[0]
+    assert url.endswith("/.well-known/oauth-protected-resource/mcp")
+    assert guarded_client.get(url.replace("https://md.example.com", "")).status_code == 200
