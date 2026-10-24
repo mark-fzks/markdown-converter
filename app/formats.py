@@ -28,15 +28,15 @@ class OutputFormat:
 FORMATS: tuple[OutputFormat, ...] = (
     # --- the ones you actually asked for ---------------------------------
     OutputFormat(
-        key="pdf",
-        label="PDF",
-        ext=".pdf",
-        mime="application/pdf",
-        writer="pdf",
-        binary=True,
+        key="rich-text",
+        label="Rich text (copy & paste)",
+        ext=".html",
+        mime="text/html",
+        writer="html5",
         group="Documents",
         css=True,
-        note="Rendered with Typst or WeasyPrint, selectable per request.",
+        note="Self-contained HTML meant for the clipboard; the web UI renders it "
+        "and copies it as rich text. Diagrams are PNG so Word and Outlook keep them.",
     ),
     OutputFormat(
         key="docx",
@@ -47,6 +47,17 @@ FORMATS: tuple[OutputFormat, ...] = (
         binary=True,
         group="Documents",
         reference_doc=True,
+    ),
+    OutputFormat(
+        key="pdf",
+        label="PDF",
+        ext=".pdf",
+        mime="application/pdf",
+        writer="pdf",
+        binary=True,
+        group="Documents",
+        css=True,
+        note="Rendered with Typst or WeasyPrint, selectable per request.",
     ),
     OutputFormat(
         key="odt",

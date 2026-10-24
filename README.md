@@ -12,7 +12,9 @@ a single container.
 
 ## What it does
 
-**Documents** — PDF, Word (`.docx`), OpenDocument (`.odt`), RTF
+**Rich text** — rendered in the browser and copied to the clipboard, ready to
+paste into Word, Outlook, Teams, Google Docs and the like (the web UI's default)
+**Documents** — Word (`.docx`), PDF, OpenDocument (`.odt`), RTF
 **Slides** — PowerPoint (`.pptx`), reveal.js HTML
 **Web & ebook** — self-contained HTML, HTML fragment, EPUB
 **Markup** — LaTeX, Typst, Markdown (GitHub/CommonMark), reStructuredText,

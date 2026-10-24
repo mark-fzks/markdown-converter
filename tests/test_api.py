@@ -108,6 +108,16 @@ def test_convert_text_to_html(client, sample_markdown):
 
 
 @pandoc_required
+def test_convert_text_to_rich_text(client, sample_markdown):
+    response = client.post("/api/convert", data={"text": sample_markdown, "to": "rich-text"})
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert response.headers["content-disposition"].endswith('.html"')
+    body = response.text
+    assert "<table" in body and "<style>" in body
+
+
+@pandoc_required
 def test_convert_file_to_docx(client, sample_markdown):
     files = {"file": ("notes.md", sample_markdown, "text/markdown")}
     response = client.post("/api/convert", files=files, data={"to": "docx"})
