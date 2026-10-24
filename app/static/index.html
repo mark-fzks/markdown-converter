@@ -89,6 +89,14 @@
   #status.err { color: var(--err); }
   footer { color: var(--muted); font-size: .85rem; text-align: center; }
   footer a { color: var(--accent); }
+  #preview .bar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .9rem; }
+  #preview .bar span { color: var(--muted); font-size: .9rem; }
+  #copy {
+    flex: none; padding: .5rem 1rem; border: 0; border-radius: 8px;
+    background: var(--accent); color: var(--accent-ink); font: 600 .9rem/1 inherit; cursor: pointer;
+  }
+  /* The document brings its own light theme, so keep the frame light too. */
+  #frame { width: 100%; height: 420px; border: 1px solid var(--rule); border-radius: 8px; background: #fff; color-scheme: light; }
   .hidden { display: none !important; }
 </style>
 </head>
@@ -96,7 +104,7 @@
 <div class="wrap">
   <header>
     <h1>Markdown Converter</h1>
-    <p>Drop markdown in, get PDF, Word, or whatever else you need back out.</p>
+    <p>Drop markdown in, get rich text to paste, Word, PDF, or whatever else you need back out.</p>
   </header>
 
   <form id="form">
@@ -185,6 +193,14 @@
     <div id="status" role="status"></div>
   </form>
 
+  <div class="panel hidden" id="preview">
+    <div class="bar">
+      <span>Paste into Word, Outlook, Teams, Google Docs&hellip;</span>
+      <button type="button" id="copy">Copy rich text</button>
+    </div>
+    <iframe id="frame" title="Rendered document" sandbox="allow-same-origin"></iframe>
+  </div>
+
   <footer><p>API docs at <a href="/docs">/docs</a> &middot; <a href="/api/version">tool versions</a></p></footer>
 </div>
 
@@ -214,7 +230,7 @@
     for (const [name, items] of groups) {
       const g = document.createElement("optgroup");
       g.label = name;
-      for (const f of items) g.appendChild(option(f.key, f.label, f.key === "pdf"));
+      for (const f of items) g.appendChild(option(f.key, f.label, f.key === "rich-text"));
       $("to").appendChild(g);
     }
 
@@ -265,7 +281,104 @@
 
   // ---- PDF-only controls -------------------------------------------------
   const syncEngine = () => $("engineWrap").classList.toggle("hidden", $("to").value !== "pdf");
-  $("to").onchange = syncEngine;
+  $("to").onchange = () => { syncEngine(); $("preview").classList.add("hidden"); };
+
+  // ---- rich text -----------------------------------------------------------
+  // Most paste targets drop <style> blocks, so bake the theme into inline
+  // styles. Inherited properties are only written where they change.
+  const INHERITED = ["color", "font-family", "font-size", "font-weight", "font-style", "line-height", "text-align", "white-space"];
+  const BOXED = ["margin-top", "margin-bottom", "margin-left", "padding-top", "padding-right", "padding-bottom", "padding-left"];
+  const SIDES = ["top", "right", "bottom", "left"];
+
+  const inlineStyles = (source, target, parentStyle) => {
+    const view = source.ownerDocument.defaultView;
+    const cs = view.getComputedStyle(source);
+    const decl = [];
+    for (const p of INHERITED) {
+      const v = cs.getPropertyValue(p);
+      if (!parentStyle || v !== parentStyle.getPropertyValue(p)) decl.push(`${p}:${v}`);
+    }
+    for (const p of BOXED) {
+      const v = cs.getPropertyValue(p);
+      if (v !== "0px") decl.push(`${p}:${v}`);
+    }
+    for (const side of SIDES) {
+      const width = cs.getPropertyValue(`border-${side}-width`);
+      const style = cs.getPropertyValue(`border-${side}-style`);
+      if (width !== "0px" && style !== "none") {
+        decl.push(`border-${side}:${width} ${style} ${cs.getPropertyValue(`border-${side}-color`)}`);
+      }
+    }
+    const bg = cs.getPropertyValue("background-color");
+    if (bg !== "rgba(0, 0, 0, 0)" && bg !== "transparent") decl.push(`background-color:${bg}`);
+    const deco = cs.getPropertyValue("text-decoration-line");
+    if (deco !== "none") decl.push(`text-decoration:${deco}`);
+    if (source.tagName === "TABLE") decl.push(`border-collapse:${cs.getPropertyValue("border-collapse")}`);
+    if (source.tagName === "IMG" && source.width) target.setAttribute("width", Math.round(source.width));
+    if (decl.length) target.setAttribute("style", decl.join(";"));
+    else target.removeAttribute("style");
+    target.removeAttribute("class");
+
+    const sourceKids = source.children, targetKids = target.children;
+    for (let i = sourceKids.length - 1; i >= 0; i--) {
+      if (view.getComputedStyle(sourceKids[i]).display === "none") targetKids[i].remove();
+      else inlineStyles(sourceKids[i], targetKids[i], cs);
+    }
+  };
+
+  const richPayload = () => {
+    const view = $("frame").contentWindow;
+    const body = view.document.body;
+    const wrapper = document.createElement("div");
+    for (const child of body.children) wrapper.appendChild(child.cloneNode(true));
+    // The wrapper stands in for <body>: its inherited font and colour go on it.
+    const cs = view.getComputedStyle(body);
+    wrapper.setAttribute("style", INHERITED.map((p) => `${p}:${cs.getPropertyValue(p)}`).join(";"));
+    for (let i = body.children.length - 1; i >= 0; i--) {
+      if (view.getComputedStyle(body.children[i]).display === "none") wrapper.children[i].remove();
+      else inlineStyles(body.children[i], wrapper.children[i], cs);
+    }
+    return { html: wrapper.outerHTML, text: body.innerText };
+  };
+
+  const copyRich = async () => {
+    const { html, text } = richPayload();
+    if (navigator.clipboard && window.ClipboardItem) {
+      try {
+        await navigator.clipboard.write([new ClipboardItem({
+          "text/html": new Blob([html], { type: "text/html" }),
+          "text/plain": new Blob([text], { type: "text/plain" }),
+        })]);
+        return true;
+      } catch (_) { /* not allowed here (no gesture, plain http): try the old way */ }
+    }
+    let copied = false;
+    const onCopy = (e) => {
+      e.clipboardData.setData("text/html", html);
+      e.clipboardData.setData("text/plain", text);
+      e.preventDefault();
+      copied = true;
+    };
+    document.addEventListener("copy", onCopy);
+    try { document.execCommand("copy"); } finally { document.removeEventListener("copy", onCopy); }
+    return copied;
+  };
+
+  const showRich = (html) => new Promise((resolve) => {
+    const frame = $("frame");
+    frame.onload = () => {
+      const height = frame.contentDocument.documentElement.scrollHeight;
+      frame.style.height = Math.min(Math.max(height + 4, 160), 640) + "px";
+      resolve();
+    };
+    $("preview").classList.remove("hidden");
+    frame.srcdoc = html;
+  });
+
+  $("copy").onclick = async () => {
+    if (await copyRich()) say("Copied — paste it wherever you need it.", "ok");
+    else say("Copy failed — select the text in the preview and press Ctrl+C.", "err");
+  };
 
   // ---- submit ------------------------------------------------------------
   const say = (msg, kind = "") => { const s = $("status"); s.textContent = msg; s.className = kind; };
@@ -295,6 +408,7 @@
     e.preventDefault();
     const fd = new FormData();
     let url = "/api/convert";
+    $("preview").classList.add("hidden");
 
     if (state.mode === "text") {
       const text = $("text").value.trim();
@@ -323,6 +437,16 @@
         try { detail = (await response.json()).detail || detail; } catch (_) {}
         return say("Failed: " + detail, "err");
       }
+      const warnings = response.headers.get("x-conversion-warnings");
+      const suffix = warnings ? ` — with warnings: ${warnings}` : "";
+
+      if ($("to").value === "rich-text" && url === "/api/convert") {
+        await showRich(await response.text());
+        const copied = await copyRich();
+        say((copied ? "Copied as rich text — paste it wherever you need it." : "Ready — click Copy rich text.") + suffix, "ok");
+        return;
+      }
+
       const blob = await response.blob();
       const name = filenameFrom(response, "converted");
       const link = document.createElement("a");
@@ -333,8 +457,7 @@
       link.remove();
       setTimeout(() => URL.revokeObjectURL(link.href), 10000);
 
-      const warnings = response.headers.get("x-conversion-warnings");
-      say(warnings ? `Downloaded ${name} — with warnings: ${warnings}` : `Downloaded ${name}`, "ok");
+      say(`Downloaded ${name}${suffix}`, "ok");
     } catch (err) {
       say("Failed: " + err.message, "err");
     } finally {

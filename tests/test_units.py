@@ -20,9 +20,14 @@ def test_format_keys_are_unique():
     assert len(FORMATS_BY_KEY) == len(FORMATS)
 
 
-@pytest.mark.parametrize("key", ["pdf", "docx", "odt", "html", "epub", "pptx", "latex"])
+@pytest.mark.parametrize("key", ["rich-text", "pdf", "docx", "odt", "html", "epub", "pptx", "latex"])
 def test_expected_formats_are_present(key):
     assert get_format(key).key == key
+
+
+def test_everyday_formats_lead_the_list():
+    # The web UI lists formats in this order and preselects the first.
+    assert [f.key for f in FORMATS[:3]] == ["rich-text", "docx", "pdf"]
 
 
 def test_unknown_format_raises():

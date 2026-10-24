@@ -30,10 +30,6 @@ def env(monkeypatch):
     """Configure the service the way the container does, minus auth."""
     monkeypatch.setenv("THEMES_DIR", str(REPO_ROOT / "themes"))
     monkeypatch.setenv("MERMAID_ENABLED", "false")
-    # The MCP session manager may only be run once per instance, and every
-    # TestClient enters the app's lifespan again. MCP has its own tests, which
-    # build a single client.
-    monkeypatch.setenv("MCP_ENABLED", "false")
     monkeypatch.delenv("AUTH_USERNAME", raising=False)
     monkeypatch.delenv("AUTH_PASSWORD", raising=False)
     get_settings.cache_clear()
